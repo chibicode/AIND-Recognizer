@@ -81,20 +81,23 @@ class SelectorBIC(ModelSelector):
 
         for n_components in range(self.min_n_components,
                                   self.max_n_components + 1):
-            model = self.base_model(n)
-            # model.score computes log probability
-            # https://github.com/hmmlearn/hmmlearn/blob/7dc439708a8c102fbb77daeb784ca87637308bc4/hmmlearn/base.py#L219-L252
-            logL = model.score(self.X, self.lengths)
-            # p is calculated as per Dana's suggestion here:
-            # https://ai-nd.slack.com/files/ylu/F4S90AJFR/number_of_parameters_in_bic.txt
-            #  p = n*(n-1) + (n-1) + 2*d*n = n^2 + 2*d*n - 1
-            p = n**2 + 2 * len(self.X[0]) * n - 1
-            N = np.sum(self.lengths)
-            bic = -2 * logL + p * np.log(N)
+            try:
+                model = self.base_model(n_components)
+                # model.score computes log probability
+                # https://github.com/hmmlearn/hmmlearn/blob/7dc439708a8c102fbb77daeb784ca87637308bc4/hmmlearn/base.py#L219-L252
+                logL = model.score(self.X, self.lengths)
+                # p is calculated as per Dana's suggestion here:
+                # https://ai-nd.slack.com/files/ylu/F4S90AJFR/number_of_parameters_in_bic.txt
+                #  p = n*(n-1) + (n-1) + 2*d*n = n^2 + 2*d*n - 1
+                p = n_components**2 + 2 * len(self.X[0]) * n_components - 1
+                N = np.sum(self.lengths)
+                bic = -2 * logL + p * np.log(N)
 
-            if bic < min_bic:
-                min_bic = bic
-                best_model = model
+                if bic < min_bic:
+                    min_bic = bic
+                    best_model = model
+            except:
+                pass
 
         return best_model
 
@@ -111,8 +114,40 @@ class SelectorDIC(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        max_dic = float("-inf")
+        best_model = None
+
+        # Following Andrew Parsons's comment:
+        # https://ai-nd.slack.com/archives/C4GQUB39T/p1490874184037691
+        # We want to calculate the largest difference between the logL
+        # for the target word and the average logL for all other words.
+        for n_components in range(self.min_n_components,
+                                  self.max_n_components + 1):
+            try:
+                model = self.base_model(n_components)
+                logL = model.score(self.X, self.lengths)
+            except:
+                model = self.base_model(1)
+                logL = model.score(self.X, self.lengths)
+
+            other_words = self.words.copy()
+            del other_words[self.this_word]
+
+            logL_other_words_total = 0
+            for word in other_words:
+                other_x, other_length = self.hwords[word]
+                try:
+                    logL_other_words_total += model.score(other_x, other_length)
+                except:
+                    pass
+
+            logL_other_words_average = logL_other_words_total/len(other_words)
+            dic = logL - logL_other_words_average
+            if dic > max_dic:
+                max_dic = dic
+                best_model = model
+
+        return best_model
 
 
 class SelectorCV(ModelSelector):
@@ -123,5 +158,36 @@ class SelectorCV(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection using CV
-        raise NotImplementedError
+        max_score = float("-inf")
+        best_n_components = 1
+
+        for n_components in range(self.min_n_components,
+                                  self.max_n_components + 1):
+
+            # We can maximize the total (instead of avg) to keep it simple
+            total_score = 0
+            split_method = KFold()
+
+            try:
+                for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
+                    cv_train_x,
+                    cv_train_length = combine_sequences(cv_train_idx,
+                                                        self.sequences)
+                    _,
+                    cv_test_length = combine_sequences(cv_test_idx,
+                                                       self.sequences)
+                    model = GaussianHMM(n_components=n_components,
+                                        covariance_type="diag",
+                                        n_iter=1000,
+                                        random_state=self.random_state,
+                                        verbose=False).fit(cv_train_x,
+                                                           cv_train_length)
+                    total_score += model.score(cv_test_idx, cv_test_length)
+            except:
+                pass
+
+            if total_score > max_score:
+                max_score = total_score
+                best_n_components = n_components
+
+        return self.base_model(best_n_components)
