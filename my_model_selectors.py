@@ -76,8 +76,27 @@ class SelectorBIC(ModelSelector):
         """
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+        min_bic = float("inf")
+        best_model = None
+
+        for n_components in range(self.min_n_components,
+                                  self.max_n_components + 1):
+            model = self.base_model(n)
+            # model.score computes log probability
+            # https://github.com/hmmlearn/hmmlearn/blob/7dc439708a8c102fbb77daeb784ca87637308bc4/hmmlearn/base.py#L219-L252
+            logL = model.score(self.X, self.lengths)
+            # p is calculated as per Dana's suggestion here:
+            # https://ai-nd.slack.com/files/ylu/F4S90AJFR/number_of_parameters_in_bic.txt
+            #  p = n*(n-1) + (n-1) + 2*d*n = n^2 + 2*d*n - 1
+            p = n**2 + 2 * len(self.X[0]) * n - 1
+            N = np.sum(self.lengths)
+            bic = -2 * logL + p * np.log(N)
+
+            if bic < min_bic:
+                min_bic = bic
+                best_model = model
+
+        return best_model
 
 
 class SelectorDIC(ModelSelector):
